@@ -375,45 +375,63 @@ def import_excel_data(uploaded_file, create_users: bool) -> dict:
     by_name = {_normalize_match(e.get("name")): e for e in existing_employers}
 
     new_employer_payload = []
-    row_keys = []
+    seen_employers = set()
+    
     for _, row in employers_df.iterrows():
         name = row["שם מעסיק"]
         number = row["ח.פ./מזהה"]
-        key = (number or "", _normalize_match(name))
-        row_keys.append(key)
-        existing = by_number.get(number) if number else by_name.get(_normalize_match(name))
-        if existing:
-            # אם זו רשומה זמנית שנוצרה במהלך קריאת האקסל,
-            # אין עדיין UUID ולכן לא מנסים לעדכן אותה.
-            if existing.get("id"):
-                if (
-                    existing.get("name") != name
-                    or (
-                        number
-                        and existing.get("employer_number") != number
-                    )
-                ):
-                    (
-                        db.table("employers")
-                        .update(
-                            {
-                                "name": name,
-                                "active": True,
-                            }
-                        )
-                        .eq("id", existing["id"])
-                        .execute()
-                    )
-        
+        normalized_name = _normalize_match(name)
+    
+        unique_key = (
+            f"number:{number}"
+            if number
+            else f"name:{normalized_name}"
+        )
+    
+        # מונע כפילויות בתוך קובץ האקסל
+        if unique_key in seen_employers:
             continue
-        new_employer_payload.append({"name": name, "employer_number": number, "active": True})
-        # Prevent duplicates inside the same workbook.
-        placeholder = {"id": None, "name": name, "employer_number": number}
-        if number:
-            by_number[number] = placeholder
-        by_name[_normalize_match(name)] = placeholder
-
-    inserted_count = 0
+    
+        seen_employers.add(unique_key)
+    
+        existing = (
+            by_number.get(number)
+            if number
+            else by_name.get(normalized_name)
+        )
+    
+        if existing:
+            existing_id = existing.get("id")
+    
+            # מעדכנים רק כשיש UUID אמיתי
+            if existing_id:
+                update_data = {"active": True}
+    
+                if existing.get("name") != name:
+                    update_data["name"] = name
+    
+                if (
+                    number
+                    and existing.get("employer_number") != number
+                ):
+                    update_data["employer_number"] = number
+    
+                (
+                    db.table("employers")
+                    .update(update_data)
+                    .eq("id", existing_id)
+                    .execute()
+                )
+    
+            continue
+    
+        new_employer_payload.append(
+            {
+                "name": name,
+                "employer_number": number,
+                "active": True,
+            }
+        )
     if new_employer_payload:
         # Remove workbook duplicates before insertion.
         unique = {}
@@ -501,22 +519,44 @@ def import_excel_data(uploaded_file, create_users: bool) -> dict:
         if not payroll_profiles and row["משרד רו״ח"]:
             unmatched_offices.add(row["משרד רו״ח"])
         for p in payroll_profiles:
-            links_to_add.add((p["id"], employer["id"]))
+            user_id = p.get("id")
+            employer_id = employer.get("id")
+        
+            if user_id and employer_id:
+                links_to_add.add(
+                    (str(user_id), str(employer_id))
+                )
 
         referent_name = row.get("רפרנטית LYN", "")
         if referent_name:
             referent = referents.get(_normalize_match(referent_name))
             if referent:
-                links_to_add.add((referent["id"], employer["id"]))
+                user_id = referent.get("id")
+                employer_id = employer.get("id")
+            
+                if user_id and employer_id:
+                    links_to_add.add(
+                        (str(user_id), str(employer_id))
+                    )
             else:
                 unmatched_referents.add(referent_name)
 
     existing_links = db.table("user_employers").select("user_id,employer_id").execute().data or []
     existing_link_set = {(x["user_id"], x["employer_id"]) for x in existing_links}
     new_links = [
-        {"user_id": user_id, "employer_id": employer_id}
+        {
+            "user_id": user_id,
+            "employer_id": employer_id,
+        }
         for user_id, employer_id in links_to_add
-        if (user_id, employer_id) not in existing_link_set
+        if user_id
+        and employer_id
+        and user_id != "None"
+        and employer_id != "None"
+        and (
+            user_id,
+            employer_id,
+        ) not in existing_link_set
     ]
     for chunk in _chunks(new_links, 400):
         db.table("user_employers").insert(chunk).execute()
