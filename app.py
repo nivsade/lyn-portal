@@ -432,6 +432,7 @@ def import_excel_data(uploaded_file, create_users: bool) -> dict:
                 "active": True,
             }
         )
+    inserted_count = 0   
     if new_employer_payload:
         # Remove workbook duplicates before insertion.
         unique = {}
