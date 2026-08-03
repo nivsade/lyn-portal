@@ -383,8 +383,28 @@ def import_excel_data(uploaded_file, create_users: bool) -> dict:
         row_keys.append(key)
         existing = by_number.get(number) if number else by_name.get(_normalize_match(name))
         if existing:
-            if existing.get("name") != name or (number and existing.get("employer_number") != number):
-                db.table("employers").update({"name": name, "active": True}).eq("id", existing["id"]).execute()
+            # אם זו רשומה זמנית שנוצרה במהלך קריאת האקסל,
+            # אין עדיין UUID ולכן לא מנסים לעדכן אותה.
+            if existing.get("id"):
+                if (
+                    existing.get("name") != name
+                    or (
+                        number
+                        and existing.get("employer_number") != number
+                    )
+                ):
+                    (
+                        db.table("employers")
+                        .update(
+                            {
+                                "name": name,
+                                "active": True,
+                            }
+                        )
+                        .eq("id", existing["id"])
+                        .execute()
+                    )
+        
             continue
         new_employer_payload.append({"name": name, "employer_number": number, "active": True})
         # Prevent duplicates inside the same workbook.
