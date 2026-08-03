@@ -14,7 +14,7 @@ from supabase import Client, create_client
 
 st.set_page_config(
     page_title="LYN | העלאות מעסיקים",
-    page_icon="📁",
+    page_icon="logo.png",
     layout="wide",
 )
 
