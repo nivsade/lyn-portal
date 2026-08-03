@@ -1039,7 +1039,7 @@ def main() -> None:
         return
 
     with st.sidebar:
-        st.subheader("LYN")
+        st.image("logo.png", width=170)
         st.write(profile["full_name"])
 
         st.caption(
