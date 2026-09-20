@@ -255,30 +255,151 @@ def upload_page(profile: dict) -> None:
 
 def history_page(profile: dict) -> None:
     st.title("היסטוריית העלאות")
+
     employers = assigned_employers(profile)
     ids = [e["id"] for e in employers]
+
     if not ids:
         return
+
     names = {e["id"]: e["name"] for e in employers}
-    rows = (admin_client().table("uploads").select("*").in_("employer_id", ids)
-            .order("uploaded_at", desc=True).limit(500).execute().data)
+    db = admin_client()
+
+    rows = (
+        db.table("uploads")
+        .select("*")
+        .in_("employer_id", ids)
+        .order("uploaded_at", desc=True)
+        .limit(500)
+        .execute()
+        .data
+    )
+
     if not rows:
         st.info("עדיין לא הועלו קבצים.")
         return
-    df = pd.DataFrame(rows)
-    df["מעסיק"] = df["employer_id"].map(names)
-    df["חודש דיווח"] = pd.to_datetime(df["report_month"]).dt.strftime("%m/%Y")
-    df["הועלה בתאריך"] = pd.to_datetime(df["uploaded_at"]).dt.tz_convert("Asia/Jerusalem").dt.strftime("%d/%m/%Y %H:%M")
-    df = df.rename(columns={"file_name": "שם קובץ", "notes": "הערה"})
-    st.dataframe(df[["מעסיק", "חודש דיווח", "שם קובץ", "הועלה בתאריך", "הערה"]], use_container_width=True, hide_index=True)
 
-    selected = st.selectbox("הורדת קובץ", rows, format_func=lambda r: f"{names[r['employer_id']]} | {r['report_month'][5:7]}/{r['report_month'][:4]} | {r['file_name']}")
-    if selected:
+    df = pd.DataFrame(rows)
+
+    df["מעסיק"] = df["employer_id"].map(names)
+    df["חודש דיווח"] = (
+        pd.to_datetime(df["report_month"])
+        .dt.strftime("%m/%Y")
+    )
+    df["הועלה בתאריך"] = (
+        pd.to_datetime(df["uploaded_at"])
+        .dt.tz_convert("Asia/Jerusalem")
+        .dt.strftime("%d/%m/%Y %H:%M")
+    )
+
+    df = df.rename(
+        columns={
+            "file_name": "שם קובץ",
+            "notes": "הערה",
+        }
+    )
+
+    st.dataframe(
+        df[
+            [
+                "מעסיק",
+                "חודש דיווח",
+                "שם קובץ",
+                "הועלה בתאריך",
+                "הערה",
+            ]
+        ],
+        use_container_width=True,
+        hide_index=True,
+    )
+
+    st.divider()
+
+    selected = st.selectbox(
+        "בחירת קובץ",
+        rows,
+        format_func=lambda r: (
+            f"{names[r['employer_id']]} | "
+            f"{r['report_month'][5:7]}/"
+            f"{r['report_month'][:4]} | "
+            f"{r['file_name']}"
+        ),
+    )
+
+    if not selected:
+        return
+
+    # הורדת הקובץ
+    try:
+        content = (
+            db.storage
+            .from_("xml-files")
+            .download(selected["storage_path"])
+        )
+
+        st.download_button(
+            "⬇️ הורדת קובץ",
+            content,
+            file_name=selected["file_name"],
+            mime="application/xml",
+            use_container_width=True,
+        )
+
+    except Exception as exc:
+        st.error(f"לא ניתן להוריד את הקובץ: {exc}")
+
+    st.divider()
+
+    # מחיקת הקובץ
+    st.subheader("מחיקת קובץ")
+
+    employer_name = names[selected["employer_id"]]
+    month_display = (
+        f"{selected['report_month'][5:7]}/"
+        f"{selected['report_month'][:4]}"
+    )
+
+    st.warning(
+        f"מחיקת הקובץ של {employer_name} "
+        f"לחודש {month_display} היא פעולה בלתי הפיכה."
+    )
+
+    confirm_delete = st.checkbox(
+        "אני מאשר/ת למחוק את הקובץ",
+        key=f"confirm_delete_{selected['id']}",
+    )
+
+    if st.button(
+        "🗑️ מחיקת הקובץ",
+        type="primary",
+        use_container_width=True,
+        disabled=not confirm_delete,
+    ):
         try:
-            content = admin_client().storage.from_("xml-files").download(selected["storage_path"])
-            st.download_button("הורדה", content, file_name=selected["file_name"], mime="application/xml")
+            # קודם מוחקים את הקובץ מה-Storage
+            db.storage.from_("xml-files").remove(
+                [selected["storage_path"]]
+            )
+
+            # לאחר מכן מוחקים את הרשומה מה-Database
+            (
+                db.table("uploads")
+                .delete()
+                .eq("id", selected["id"])
+                .execute()
+            )
+
+            st.success(
+                f"הקובץ של {employer_name} "
+                f"לחודש {month_display} נמחק בהצלחה."
+            )
+
+            st.rerun()
+
         except Exception as exc:
-            st.error(f"לא ניתן להוריד את הקובץ: {exc}")
+            st.error(
+                f"מחיקת הקובץ נכשלה: {exc}"
+            )
 
 
 
