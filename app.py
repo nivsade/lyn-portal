@@ -14,6 +14,7 @@ import pandas as pd
 import streamlit as st
 from dateutil.relativedelta import relativedelta
 from supabase import Client, create_client
+from lyn_operations import operations_page
 
 st.set_page_config(page_title="LYN | העלאות מעסיקים", page_icon="logo.png" if Path("logo.png").exists() else "📁", layout="wide")
 
@@ -255,151 +256,44 @@ def upload_page(profile: dict) -> None:
 
 def history_page(profile: dict) -> None:
     st.title("היסטוריית העלאות")
-
     employers = assigned_employers(profile)
     ids = [e["id"] for e in employers]
-
     if not ids:
         return
-
     names = {e["id"]: e["name"] for e in employers}
     db = admin_client()
-
-    rows = (
-        db.table("uploads")
-        .select("*")
-        .in_("employer_id", ids)
-        .order("uploaded_at", desc=True)
-        .limit(500)
-        .execute()
-        .data
-    )
-
+    rows = (db.table("uploads").select("*").in_("employer_id", ids)
+            .order("uploaded_at", desc=True).limit(500).execute().data or [])
     if not rows:
         st.info("עדיין לא הועלו קבצים.")
         return
-
     df = pd.DataFrame(rows)
-
     df["מעסיק"] = df["employer_id"].map(names)
-    df["חודש דיווח"] = (
-        pd.to_datetime(df["report_month"])
-        .dt.strftime("%m/%Y")
-    )
-    df["הועלה בתאריך"] = (
-        pd.to_datetime(df["uploaded_at"])
-        .dt.tz_convert("Asia/Jerusalem")
-        .dt.strftime("%d/%m/%Y %H:%M")
-    )
-
-    df = df.rename(
-        columns={
-            "file_name": "שם קובץ",
-            "notes": "הערה",
-        }
-    )
-
-    st.dataframe(
-        df[
-            [
-                "מעסיק",
-                "חודש דיווח",
-                "שם קובץ",
-                "הועלה בתאריך",
-                "הערה",
-            ]
-        ],
-        use_container_width=True,
-        hide_index=True,
-    )
-
-    st.divider()
-
-    selected = st.selectbox(
-        "בחירת קובץ",
-        rows,
-        format_func=lambda r: (
-            f"{names[r['employer_id']]} | "
-            f"{r['report_month'][5:7]}/"
-            f"{r['report_month'][:4]} | "
-            f"{r['file_name']}"
-        ),
-    )
-
-    if not selected:
-        return
-
-    # הורדת הקובץ
-    try:
-        content = (
-            db.storage
-            .from_("xml-files")
-            .download(selected["storage_path"])
-        )
-
-        st.download_button(
-            "⬇️ הורדת קובץ",
-            content,
-            file_name=selected["file_name"],
-            mime="application/xml",
-            use_container_width=True,
-        )
-
-    except Exception as exc:
-        st.error(f"לא ניתן להוריד את הקובץ: {exc}")
-
-    st.divider()
-
-    # מחיקת הקובץ
-    st.subheader("מחיקת קובץ")
-
-    employer_name = names[selected["employer_id"]]
-    month_display = (
-        f"{selected['report_month'][5:7]}/"
-        f"{selected['report_month'][:4]}"
-    )
-
-    st.warning(
-        f"מחיקת הקובץ של {employer_name} "
-        f"לחודש {month_display} היא פעולה בלתי הפיכה."
-    )
-
-    confirm_delete = st.checkbox(
-        "אני מאשר/ת למחוק את הקובץ",
-        key=f"confirm_delete_{selected['id']}",
-    )
-
-    if st.button(
-        "🗑️ מחיקת הקובץ",
-        type="primary",
-        use_container_width=True,
-        disabled=not confirm_delete,
-    ):
+    df["חודש דיווח"] = pd.to_datetime(df["report_month"]).dt.strftime("%m/%Y")
+    df["הועלה בתאריך"] = pd.to_datetime(df["uploaded_at"], utc=True).dt.tz_convert("Asia/Jerusalem").dt.strftime("%d/%m/%Y %H:%M")
+    df = df.rename(columns={"file_name": "שם קובץ", "notes": "הערה"})
+    st.dataframe(df[["מעסיק", "חודש דיווח", "שם קובץ", "הועלה בתאריך", "הערה"]], use_container_width=True, hide_index=True)
+    selected = st.selectbox("בחירת קובץ", rows, format_func=lambda r: f"{names[r['employer_id']]} | {r['report_month'][5:7]}/{r['report_month'][:4]} | {r['file_name']}")
+    if selected:
         try:
-            # קודם מוחקים את הקובץ מה-Storage
-            db.storage.from_("xml-files").remove(
-                [selected["storage_path"]]
-            )
-
-            # לאחר מכן מוחקים את הרשומה מה-Database
-            (
-                db.table("uploads")
-                .delete()
-                .eq("id", selected["id"])
-                .execute()
-            )
-
-            st.success(
-                f"הקובץ של {employer_name} "
-                f"לחודש {month_display} נמחק בהצלחה."
-            )
-
-            st.rerun()
-
+            content = db.storage.from_("xml-files").download(selected["storage_path"])
+            st.download_button("⬇️ הורדה", content, file_name=selected["file_name"], mime="application/xml")
         except Exception as exc:
-            st.error(
-                f"מחיקת הקובץ נכשלה: {exc}"
-            )
+            st.error(f"לא ניתן להוריד את הקובץ: {exc}")
+        st.divider()
+        st.subheader("מחיקת קובץ")
+        st.warning("מחיקה קבועה של הקובץ והרשומה שלו. אין אפשרות לשחזר דרך הפורטל.")
+        confirm = st.checkbox("אני מאשר/ת את מחיקת הקובץ", key=f"del_{selected['id']}")
+        if st.button("🗑️ מחיקת הקובץ", disabled=not confirm):
+            try:
+                # Delete database metadata only after Storage confirms removal.
+                result = db.storage.from_("xml-files").remove([selected["storage_path"]])
+                if isinstance(result, list) and any(isinstance(x,dict) and x.get('error') for x in result):
+                    raise RuntimeError(str(result))
+                db.table("uploads").delete().eq("id", selected["id"]).eq("employer_id", selected["employer_id"]).execute()
+                st.rerun()
+            except Exception as exc:
+                st.error(f"המחיקה נכשלה; בדוק את Storage ואת הרשומה: {exc}")
 
 
 
@@ -473,222 +367,340 @@ def _chunks(items: list[dict], size: int = 300):
         yield items[index:index + size]
 
 
+def _valid_uuid(value) -> bool:
+    """Return True only for a real UUID value."""
+    if value is None:
+        return False
+    text = str(value).strip()
+    if not text or text.lower() in {"none", "nan", "null"}:
+        return False
+    try:
+        uuid.UUID(text)
+        return True
+    except (ValueError, TypeError, AttributeError):
+        return False
+
+
 def import_excel_data(uploaded_file, create_users: bool) -> dict:
     employers_df, users_df = _read_import_workbook(uploaded_file)
     db = admin_client()
 
+    # ---------- Clean workbook data ----------
     employers_df["שם מעסיק"] = employers_df["שם מעסיק"].map(_clean_text)
     employers_df["ח.פ./מזהה"] = employers_df["ח.פ./מזהה"].map(_normalize_employer_number)
     employers_df["משרד רו״ח"] = employers_df["משרד רו״ח"].map(_clean_text)
+
     if "רפרנטית LYN" not in employers_df.columns:
         employers_df["רפרנטית LYN"] = ""
     employers_df["רפרנטית LYN"] = employers_df["רפרנטית LYN"].map(_clean_text)
+
     employers_df = employers_df[employers_df["שם מעסיק"] != ""].copy()
 
     users_df["משרד רו״ח"] = users_df["משרד רו״ח"].map(_clean_text)
-    users_df["מייל חשבת שכר"] = users_df["מייל חשבת שכר"].map(lambda x: normalize_email(_clean_text(x)))
+    users_df["מייל חשבת שכר"] = users_df["מייל חשבת שכר"].map(
+        lambda value: normalize_email(_clean_text(value))
+    )
     users_df = users_df[
-        (users_df["משרד רו״ח"] != "") & users_df["מייל חשבת שכר"].map(_valid_email)
+        (users_df["משרד רו״ח"] != "")
+        & users_df["מייל חשבת שכר"].map(_valid_email)
     ].drop_duplicates(subset=["משרד רו״ח", "מייל חשבת שכר"])
 
-    existing_employers = db.table("employers").select("*").execute().data or []
-    by_number = {str(e.get("employer_number")): e for e in existing_employers if e.get("employer_number")}
-    by_name = {_normalize_match(e.get("name")): e for e in existing_employers}
+    # ---------- Employers ----------
+    existing_employers = (
+        db.table("employers").select("*").execute().data or []
+    )
 
-    new_employer_payload = []
-    seen_employers = set()
-    
+    by_number = {
+        str(item["employer_number"]): item
+        for item in existing_employers
+        if item.get("employer_number")
+    }
+    by_name = {
+        _normalize_match(item.get("name")): item
+        for item in existing_employers
+        if item.get("name")
+    }
+
+    inserted_count = 0
+    new_employers: list[dict] = []
+    seen_keys: set[str] = set()
+
     for _, row in employers_df.iterrows():
-        name = row["שם מעסיק"]
-        number = row["ח.פ./מזהה"]
+        name = _clean_text(row["שם מעסיק"])
+        number = _normalize_employer_number(row["ח.פ./מזהה"])
         normalized_name = _normalize_match(name)
-    
-        unique_key = (
-            f"number:{number}"
-            if number
-            else f"name:{normalized_name}"
-        )
-    
-        # מונע כפילויות בתוך קובץ האקסל
-        if unique_key in seen_employers:
+
+        unique_key = f"number:{number}" if number else f"name:{normalized_name}"
+        if unique_key in seen_keys:
             continue
-    
-        seen_employers.add(unique_key)
-    
-        existing = (
-            by_number.get(number)
-            if number
-            else by_name.get(normalized_name)
-        )
-    
+        seen_keys.add(unique_key)
+
+        existing = by_number.get(number) if number else by_name.get(normalized_name)
+
         if existing:
             existing_id = existing.get("id")
-    
-            # מעדכנים רק כשיש UUID אמיתי
-            if existing_id:
-                update_data = {"active": True}
-    
-                if existing.get("name") != name:
-                    update_data["name"] = name
-    
-                if (
-                    number
-                    and existing.get("employer_number") != number
-                ):
+            if _valid_uuid(existing_id):
+                update_data = {
+                    "name": name,
+                    "active": True,
+                }
+                if number:
                     update_data["employer_number"] = number
-    
+
                 (
                     db.table("employers")
                     .update(update_data)
-                    .eq("id", existing_id)
+                    .eq("id", str(existing_id))
                     .execute()
                 )
-    
             continue
-    
-        new_employer_payload.append(
+
+        new_employers.append(
             {
                 "name": name,
                 "employer_number": number,
                 "active": True,
             }
         )
-    inserted_count = 0   
-    if new_employer_payload:
-        # Remove workbook duplicates before insertion.
-        unique = {}
-        for item in new_employer_payload:
-            k = item["employer_number"] or f"name:{_normalize_match(item['name'])}"
-            unique[k] = item
-        for chunk in _chunks(list(unique.values()), 200):
-            inserted = db.table("employers").insert(chunk).execute().data or []
-            inserted_count += len(inserted)
 
-    # Reload employers so every row has a real UUID.
+    for chunk in _chunks(new_employers, 150):
+        response = db.table("employers").insert(chunk).execute()
+        inserted_count += len(response.data or [])
+
+    # Reload from Supabase, so every employer now has a real UUID.
     all_employers = db.table("employers").select("*").execute().data or []
-    by_number = {str(e.get("employer_number")): e for e in all_employers if e.get("employer_number")}
-    by_name = {_normalize_match(e.get("name")): e for e in all_employers}
 
+    by_number = {
+        str(item["employer_number"]): item
+        for item in all_employers
+        if item.get("employer_number") and _valid_uuid(item.get("id"))
+    }
+    by_name = {
+        _normalize_match(item.get("name")): item
+        for item in all_employers
+        if item.get("name") and _valid_uuid(item.get("id"))
+    }
+
+    # ---------- Payroll users ----------
     profiles = db.table("profiles").select("*").execute().data or []
-    profile_by_email = {normalize_email(p.get("email", "")): p for p in profiles}
-    new_credentials = []
-    user_errors = []
+    profile_by_email = {
+        normalize_email(item.get("email", "")): item
+        for item in profiles
+        if item.get("email") and _valid_uuid(item.get("id"))
+    }
 
+    new_credentials: list[dict] = []
+    user_errors: list[str] = []
     office_users: dict[str, list[dict]] = {}
+
     for _, row in users_df.iterrows():
-        office = row["משרד רו״ח"]
-        email = row["מייל חשבת שכר"]
+        office = _clean_text(row["משרד רו״ח"])
+        email = normalize_email(_clean_text(row["מייל חשבת שכר"]))
         profile = profile_by_email.get(email)
 
-        if not profile and create_users:
-            password = _temporary_password()
+        if profile is None and create_users:
+            temporary_password = _temporary_password()
+
             try:
-                created = db.auth.admin.create_user({
-                    "email": email,
-                    "password": password,
-                    "email_confirm": True,
-                    "user_metadata": {"full_name": email.split("@")[0]},
-                })
-                user_id = str(created.user.id)
+                created = db.auth.admin.create_user(
+                    {
+                        "email": email,
+                        "password": temporary_password,
+                        "email_confirm": True,
+                        "user_metadata": {
+                            "full_name": email.split("@")[0]
+                        },
+                    }
+                )
+
+                created_user = getattr(created, "user", None)
+                user_id = getattr(created_user, "id", None)
+
+                if not _valid_uuid(user_id):
+                    raise ValueError(
+                        "Supabase לא החזיר מזהה משתמש תקין."
+                    )
+
                 profile_data = {
-                    "id": user_id,
+                    "id": str(user_id),
                     "full_name": email.split("@")[0],
                     "email": email,
                     "role": "payroll",
                     "office_name": office,
                     "active": True,
                 }
-                db.table("profiles").upsert(profile_data, on_conflict="id").execute()
-                profile = profile_data
-                profile_by_email[email] = profile
-                new_credentials.append({
-                    "משרד רו״ח": office,
-                    "מייל": email,
-                    "סיסמה זמנית": password,
-                })
-            except Exception as exc:
-                user_errors.append(f"{email}: {exc}")
-                continue
-        elif profile:
-            update = {"role": "payroll", "office_name": office, "active": True}
-            db.table("profiles").update(update).eq("id", profile["id"]).execute()
-            profile.update(update)
 
-        if profile:
-            office_users.setdefault(_normalize_match(office), []).append(profile)
-
-    # Every payroll user already defined with the same office also receives the office's employers.
-    refreshed_profiles = db.table("profiles").select("*").eq("active", True).execute().data or []
-    for p in refreshed_profiles:
-        if p.get("role") == "payroll" and p.get("office_name"):
-            office_users.setdefault(_normalize_match(p["office_name"]), []).append(p)
-
-    referents = {
-        _normalize_match(p.get("full_name")): p
-        for p in refreshed_profiles
-        if p.get("role") == "referent"
-    }
-
-    links_to_add = set()
-    unmatched_offices = set()
-    unmatched_referents = set()
-    for _, row in employers_df.iterrows():
-        employer = by_number.get(row["ח.פ./מזהה"]) if row["ח.פ./מזהה"] else by_name.get(_normalize_match(row["שם מעסיק"]))
-        if not employer:
-            continue
-        office_key = _normalize_match(row["משרד רו״ח"])
-        payroll_profiles = office_users.get(office_key, [])
-        if not payroll_profiles and row["משרד רו״ח"]:
-            unmatched_offices.add(row["משרד רו״ח"])
-        for p in payroll_profiles:
-            user_id = p.get("id")
-            employer_id = employer.get("id")
-        
-            if user_id and employer_id:
-                links_to_add.add(
-                    (str(user_id), str(employer_id))
+                (
+                    db.table("profiles")
+                    .upsert(profile_data, on_conflict="id")
+                    .execute()
                 )
 
-        referent_name = row.get("רפרנטית LYN", "")
+                profile = profile_data
+                profile_by_email[email] = profile
+
+                new_credentials.append(
+                    {
+                        "משרד רו״ח": office,
+                        "מייל": email,
+                        "סיסמה זמנית": temporary_password,
+                    }
+                )
+
+            except Exception as exc:
+                # A user may already exist in Auth but not in profiles.
+                # We keep the error visible instead of inserting a fake UUID.
+                user_errors.append(f"{email}: {exc}")
+                continue
+
+        elif profile is not None:
+            profile_id = profile.get("id")
+
+            if not _valid_uuid(profile_id):
+                user_errors.append(
+                    f"{email}: למשתמש קיים מזהה לא תקין."
+                )
+                continue
+
+            update_data = {
+                "role": "payroll",
+                "office_name": office,
+                "active": True,
+            }
+
+            (
+                db.table("profiles")
+                .update(update_data)
+                .eq("id", str(profile_id))
+                .execute()
+            )
+            profile.update(update_data)
+
+        if profile and _valid_uuid(profile.get("id")):
+            office_key = _normalize_match(office)
+            office_users.setdefault(office_key, []).append(profile)
+
+    # Add every existing active payroll user to the office map.
+    refreshed_profiles = (
+        db.table("profiles")
+        .select("*")
+        .eq("active", True)
+        .execute()
+        .data
+        or []
+    )
+
+    for item in refreshed_profiles:
+        if (
+            item.get("role") == "payroll"
+            and item.get("office_name")
+            and _valid_uuid(item.get("id"))
+        ):
+            office_key = _normalize_match(item["office_name"])
+            office_users.setdefault(office_key, []).append(item)
+
+    # Remove duplicate users inside each office.
+    for office_key, office_profiles in list(office_users.items()):
+        unique_profiles = {}
+        for item in office_profiles:
+            profile_id = str(item.get("id", ""))
+            if _valid_uuid(profile_id):
+                unique_profiles[profile_id] = item
+        office_users[office_key] = list(unique_profiles.values())
+
+    referents = {
+        _normalize_match(item.get("full_name")): item
+        for item in refreshed_profiles
+        if (
+            item.get("role") == "referent"
+            and item.get("full_name")
+            and _valid_uuid(item.get("id"))
+        )
+    }
+
+    # ---------- User ↔ employer links ----------
+    links_to_add: set[tuple[str, str]] = set()
+    unmatched_offices: set[str] = set()
+    unmatched_referents: set[str] = set()
+
+    for _, row in employers_df.iterrows():
+        employer_number = _normalize_employer_number(row["ח.פ./מזהה"])
+        employer_name = _clean_text(row["שם מעסיק"])
+
+        employer = (
+            by_number.get(employer_number)
+            if employer_number
+            else by_name.get(_normalize_match(employer_name))
+        )
+
+        if not employer or not _valid_uuid(employer.get("id")):
+            continue
+
+        employer_id = str(employer["id"])
+        office_name = _clean_text(row["משרד רו״ח"])
+        office_key = _normalize_match(office_name)
+        payroll_profiles = office_users.get(office_key, [])
+
+        if office_name and not payroll_profiles:
+            unmatched_offices.add(office_name)
+
+        for payroll_profile in payroll_profiles:
+            user_id = payroll_profile.get("id")
+            if _valid_uuid(user_id):
+                links_to_add.add((str(user_id), employer_id))
+
+        referent_name = _clean_text(row.get("רפרנטית LYN", ""))
         if referent_name:
             referent = referents.get(_normalize_match(referent_name))
-            if referent:
-                user_id = referent.get("id")
-                employer_id = employer.get("id")
-            
-                if user_id and employer_id:
-                    links_to_add.add(
-                        (str(user_id), str(employer_id))
-                    )
+
+            if referent and _valid_uuid(referent.get("id")):
+                links_to_add.add(
+                    (str(referent["id"]), employer_id)
+                )
             else:
                 unmatched_referents.add(referent_name)
 
-    existing_links = db.table("user_employers").select("user_id,employer_id").execute().data or []
-    existing_link_set = {(x["user_id"], x["employer_id"]) for x in existing_links}
+    existing_links = (
+        db.table("user_employers")
+        .select("user_id,employer_id")
+        .execute()
+        .data
+        or []
+    )
+
+    existing_link_set = {
+        (str(item["user_id"]), str(item["employer_id"]))
+        for item in existing_links
+        if (
+            _valid_uuid(item.get("user_id"))
+            and _valid_uuid(item.get("employer_id"))
+        )
+    }
+
     new_links = [
         {
             "user_id": user_id,
             "employer_id": employer_id,
         }
-        for user_id, employer_id in links_to_add
-        if user_id
-        and employer_id
-        and user_id != "None"
-        and employer_id != "None"
-        and (
-            user_id,
-            employer_id,
-        ) not in existing_link_set
+        for user_id, employer_id in sorted(links_to_add)
+        if (
+            _valid_uuid(user_id)
+            and _valid_uuid(employer_id)
+            and (user_id, employer_id) not in existing_link_set
+        )
     ]
-    for chunk in _chunks(new_links, 400):
-        db.table("user_employers").insert(chunk).execute()
+
+    links_added = 0
+    for chunk in _chunks(new_links, 250):
+        response = db.table("user_employers").insert(chunk).execute()
+        links_added += len(response.data or [])
 
     return {
         "employers_in_file": len(employers_df),
         "employers_added": inserted_count,
         "users_in_file": len(users_df),
         "users_created": len(new_credentials),
-        "links_added": len(new_links),
+        "links_added": links_added,
         "credentials": new_credentials,
         "unmatched_offices": sorted(unmatched_offices),
         "unmatched_referents": sorted(unmatched_referents),
@@ -848,6 +860,8 @@ def main() -> None:
         st.write(profile["full_name"])
         st.caption(f"{ROLES_HE[profile['role']]} · {profile.get('office_name') or ''}")
         pages = ["סטטוס חודשי", "העלאת קובץ", "היסטוריה"]
+        if profile["role"] in {"admin", "referent"}:
+            pages.append("מערכת תפעול")
         if profile["role"] == "admin":
             pages.append("ניהול מערכת")
         page = st.radio("תפריט", pages)
@@ -858,7 +872,10 @@ def main() -> None:
     if page == "סטטוס חודשי": dashboard(profile)
     elif page == "העלאת קובץ": upload_page(profile)
     elif page == "היסטוריה": history_page(profile)
-    else: admin_page(profile)
+    elif page == "מערכת תפעול":
+        operations_page(profile, admin_client(), assigned_employers(profile))
+    elif page == "ניהול מערכת" and profile["role"] == "admin": admin_page(profile)
+    else: st.error("אין הרשאה.")
 
 
 if __name__ == "__main__":
