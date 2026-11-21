@@ -93,3 +93,16 @@ def unmatched_page(profile):
         mailto = f'mailto:{quote(address)}?subject={quote(subject)}&body={quote(body)}'
         st.link_button('פתיחת טיוטה בתוכנת המייל', mailto)
     st.caption('לפני השליחה: בדקי את כתובת החברה, את פרטי העובד, את שם הקובץ ואת האסמכתאות. אין לשלוח פרטים שאינם נחוצים.')
+
+
+def ai_knowledge_context() -> str:
+    """Curated internal SOP and routing hints; no live email access."""
+    lines = ["ידע תפעולי פנימי של LYN בנושא אי־שיוכים; יש לוודא נתונים מול הגוף המוסדי:"]
+    for issue, info in ISSUES.items():
+        lines.append(f"סוג: {issue}. שלבים: " + " ".join(info["steps"]))
+    lines.append("ניתוב כתובות לפי גוף ומוצר; דרוש אימות פירושו שאין להמליץ על כתובת כמאומתת:")
+    for insurer, products in ROUTES.items():
+        for product, (address, status) in products.items():
+            lines.append(f"{insurer} / {product}: {address or 'כתובת לא מאומתת'}; {status}")
+    lines.append("בכל טיוטת פנייה נושא המייל חייב לכלול שם מעסיק וח.פ.; אם חסרים יש לבקש אותם בלשונית הטיפול. אין לשדר דיווח כפול או לשנות רכיבי הפרשה ללא אימות.")
+    return "\n".join(lines)

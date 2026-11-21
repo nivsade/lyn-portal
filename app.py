@@ -15,6 +15,7 @@ import streamlit as st
 from dateutil.relativedelta import relativedelta
 from supabase import Client, create_client
 from lyn_operations import operations_page
+from lyn_unmatched import unmatched_page, ai_knowledge_context
 
 st.set_page_config(page_title="LYN | העלאות מעסיקים", page_icon="logo.png" if Path("logo.png").exists() else "📁", layout="wide")
 
@@ -909,7 +910,15 @@ def ai_assistant_page(profile: dict) -> None:
         st.error("אין הרשאה.")
         return
     st.title("עוזר AI מקצועי")
-    st.caption("תשובות קצרות ומעשיות. בשלב זה אין חיבור אוטומטי למיילים או לאינטרנט.")
+    st.caption("ייעוץ מקצועי וניסוח פניות לאי־שיוכים. אין שליחה אוטומטית של מיילים.")
+    chat_tab, workflow_tab = st.tabs(["💬 שאלות לעוזר AI", "📨 טיפול באי־שיוכים וטיוטות מייל"])
+    with workflow_tab:
+        unmatched_page(profile)
+    with chat_tab:
+        _ai_chat_content(profile)
+
+
+def _ai_chat_content(profile: dict) -> None:
     api_key = _secret_value("OPENAI_API_KEY")
     if not api_key:
         st.info("להפעלת הצ'אט, מנהל המערכת צריך להוסיף OPENAI_API_KEY ל-Streamlit Secrets. עד אז הצ'אט אינו פעיל.")
@@ -936,7 +945,10 @@ def ai_assistant_page(profile: dict) -> None:
                       "בצורה עניינית ומעשית, עם צעדים ברורים. אל תמציא נהלים או עובדות. "
                       "אם אינך בטוח, ציין מה צריך לבדוק ולמי לפנות. "
                       "אין לך גישה למיילים, לאינטרנט בזמן אמת או למאגר המסמכים, "
-                      "ואסור לטעון שבדקת אותם. אל תבקש נתוני עובדים מזהים או מידע אישי רגיש.")
+                      "ואסור לטעון שבדקת אותם. אל תבקש נתוני עובדים מזהים או מידע אישי רגיש. "
+                      "ליצירת טיוטת מייל עם פרטי מעסיק מלאים הפנה ללשונית טיפול באי־שיוכים. "
+                      "אין להמציא כתובות מייל או להבטיח שיוך לפני אישור הגוף המוסדי. "
+                      + ai_knowledge_context())
             payload = {"model": "gpt-4.1-mini", "messages": [{"role": "system", "content": system}] + st.session_state.lyn_ai_messages[-12:], "temperature": 0.2, "max_tokens": 550}
             req = Request("https://api.openai.com/v1/chat/completions", data=json.dumps(payload, ensure_ascii=False).encode("utf-8"), headers={"Authorization": "Bearer " + api_key, "Content-Type": "application/json"}, method="POST")
             with urlopen(req, timeout=35) as response:
