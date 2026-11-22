@@ -1,4 +1,5 @@
 from __future__ import annotations
+from lyn_writing import writing_page, WRITING_RULES
 
 import calendar
 import hashlib
@@ -15,6 +16,7 @@ import streamlit as st
 from dateutil.relativedelta import relativedelta
 from supabase import Client, create_client
 from lyn_operations import operations_page
+from lyn_receipts import upload_receipts, receipt_history
 from lyn_unmatched import unmatched_page, ai_knowledge_context
 from lyn_knowledge import knowledge_page, faq_context
 
@@ -194,13 +196,18 @@ def dashboard(profile: dict) -> None:
 
 
 def upload_page(profile: dict) -> None:
-    st.title("העלאת קובץ XML")
+    st.title("העלאת קבצים")
     employers = assigned_employers(profile)
     if not employers:
         st.warning("לא שויכו אליך מעסיקים.")
         return
     employer_by_name = {f"{e['name']} ({e.get('employer_number') or 'ללא מספר'})": e for e in employers}
     current = date.today().replace(day=1) - relativedelta(months=1)
+
+    kind = st.radio("סוג העלאה", ["קובצי שכר (XML/DAT)", "אסמכתאות העברה בנקאית"], horizontal=True)
+    if kind == "אסמכתאות העברה בנקאית":
+        upload_receipts(profile, admin_client(), employers, current, MONTHS_HE)
+        return
 
     with st.form("upload_form", clear_on_submit=True):
         employer_label = st.selectbox("מעסיק", list(employer_by_name))
@@ -258,6 +265,10 @@ def upload_page(profile: dict) -> None:
 
 def history_page(profile: dict) -> None:
     st.title("היסטוריית העלאות")
+    kind = st.radio("סוג קובץ", ["קובצי שכר", "אסמכתאות העברה בנקאית"], horizontal=True, key="history_kind")
+    if kind == "אסמכתאות העברה בנקאית":
+        receipt_history(admin_client(), assigned_employers(profile), "history_receipts")
+        return
     employers = assigned_employers(profile)
     ids = [e["id"] for e in employers]
     if not ids:
@@ -929,7 +940,9 @@ def ai_assistant_page(profile: dict) -> None:
         return
     st.title("עוזר AI מקצועי")
     st.caption("ייעוץ מקצועי וניסוח פניות לאי־שיוכים. אין שליחה אוטומטית של מיילים.")
-    chat_tab, knowledge_tab, workflow_tab = st.tabs(["💬 שאלות לעוזר AI", "📚 מרכז ידע", "📨 טיפול באי־שיוכים וטיוטות מייל"])
+    chat_tab, knowledge_tab, workflow_tab, writing_tab = st.tabs(["💬 שאלות לעוזר AI", "📚 מרכז ידע", "📨 טיפול באי־שיוכים וטיוטות מייל", "✍️ ניסוח הודעות ומיילים"])
+    with writing_tab:
+        writing_page(_secret_value("OPENAI_API_KEY"))
     with knowledge_tab:
         knowledge_page()
     with workflow_tab:
@@ -968,7 +981,7 @@ def _ai_chat_content(profile: dict) -> None:
                       "ואסור לטעון שבדקת אותם. אל תבקש נתוני עובדים מזהים או מידע אישי רגיש. "
                       "ליצירת טיוטת מייל עם פרטי מעסיק מלאים הפנה ללשונית טיפול באי־שיוכים. "
                       "אין להמציא כתובות מייל או להבטיח שיוך לפני אישור הגוף המוסדי. "
-                      + ai_knowledge_context() + faq_context() + "\nהפרד בין נוהל LYN שנמסר על ידי המנהל לבין ידע כללי או הצעת AI; סמן תוכן שממתין לאישור במפורש. אל תמציא מספרי חשבונות בנק או שיעורי הפרשה. כאשר חסר מידע, הפנה למקור המתאים.")
+                      + WRITING_RULES + "\n" + ai_knowledge_context() + faq_context() + "\nהפרד בין נוהל LYN שנמסר על ידי המנהל לבין ידע כללי או הצעת AI; סמן תוכן שממתין לאישור במפורש. אל תמציא מספרי חשבונות בנק או שיעורי הפרשה. כאשר חסר מידע, הפנה למקור המתאים.")
             payload = {"model": "gpt-4.1-mini", "messages": [{"role": "system", "content": system}] + st.session_state.lyn_ai_messages[-12:], "temperature": 0.2, "max_tokens": 550}
             req = Request("https://api.openai.com/v1/chat/completions", data=json.dumps(payload, ensure_ascii=False).encode("utf-8"), headers={"Authorization": "Bearer " + api_key, "Content-Type": "application/json"}, method="POST")
             with urlopen(req, timeout=35) as response:

@@ -1,6 +1,7 @@
 """LYN internal operations screens. Only call for admin/referent profiles."""
 import streamlit as st
 import pandas as pd
+from lyn_receipts import receipt_history
 
 INTERNAL = {'admin', 'referent'}
 
@@ -32,7 +33,7 @@ def operations_page(profile, db, employers):
     eid = selected['id']
     st.subheader(selected['name'])
     st.caption(f"מזהה מעסיק: {selected.get('employer_number') or 'לא הוזן'}")
-    tab1, tab2, tab3, tab4, tab5 = st.tabs(['כרטיס מעסיק','ייפויי כוח','אי־שיוכים','משימות','קבצים'])
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(['כרטיס מעסיק','ייפויי כוח','אי־שיוכים','משימות','קבצים','אסמכתאות'])
     with tab1:
         details = _records(db, 'lyn_employer_details', eid)
         old = details[0] if details else {}
@@ -90,3 +91,6 @@ def operations_page(profile, db, employers):
     with tab5:
         _show(_records(db, 'uploads', eid), ['file_name','report_month','uploaded_at','notes'])
         st.caption('העלאה והורדה מתבצעות במסכים הקיימים בפורטל.')
+
+    with tab6:
+        receipt_history(db, [selected], "client_receipts")
