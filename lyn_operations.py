@@ -24,7 +24,7 @@ def _show(rows, columns):
 
 def operations_page(profile, db, employers):
     _guard(profile)
-    st.title('LYN | מערכת תפעול')
+    st.title('LYN | לקוחות')
     if not employers:
         st.info('אין מעסיקים משויכים.'); return
     choices = {f"{e['name']} · {e.get('employer_number') or ''}": e for e in employers}

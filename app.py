@@ -856,6 +856,7 @@ def important_files_page(profile: dict) -> None:
     st.caption("טפסים, אישורים, מכתבים ונהלי עבודה לשימוש צוות LYN.")
     db = admin_client()
     try:
+        db.storage.get_bucket(IMPORTANT_FILES_BUCKET)
         objects = db.storage.from_(IMPORTANT_FILES_BUCKET).list()
     except Exception:
         st.error("לא ניתן לגשת למאגר הקבצים. יש ליצור ב-Supabase Storage באקט פרטי בשם lyn-important-files.")
@@ -864,14 +865,23 @@ def important_files_page(profile: dict) -> None:
     if profile["role"] == "admin":
         with st.expander("העלאת קובץ חדש", expanded=False):
             file = st.file_uploader("בחר קובץ", type=["pdf", "docx", "xlsx", "txt", "md", "png", "jpg"])
-            if st.button("שמירת קובץ", disabled=file is None, type="primary"):
+            display = st.text_input("שם תצוגה לקובץ (אפשר בעברית)", value=Path(file.name).stem if file else "", key=f"important_name_{file.name if file else 'empty'}")
+            if st.button("שמירת קובץ", disabled=file is None or not display.strip(), type="primary"):
                 if file.size > 15 * 1024 * 1024:
                     st.error("הקובץ גדול מ-15MB.")
                 else:
                     try:
                         import mimetypes
                         # Prefix with a UUID to prevent accidental overwriting.
-                        key = f"{uuid.uuid4().hex}__{safe_filename(file.name)}"
+                        import base64
+                        suffix = Path(file.name).suffix.lower()
+                        title = display.strip()
+                        if not title.lower().endswith(suffix):
+                            title += suffix
+                        if len(title.encode("utf-8")) > 180 or any(c in title for c in ("/", "\\", "\n", "\r")):
+                            raise ValueError("שם הקובץ ארוך מדי או כולל תווים אסורים.")
+                        encoded = base64.urlsafe_b64encode(title.encode("utf-8")).decode("ascii").rstrip("=")
+                        key = f"{uuid.uuid4().hex}__b64__{encoded}{suffix}"
                         db.storage.from_(IMPORTANT_FILES_BUCKET).upload(
                             key, file.getvalue(), {"content-type": mimetypes.guess_type(file.name)[0] or "application/octet-stream", "upsert": "false"}
                         )
@@ -888,6 +898,13 @@ def important_files_page(profile: dict) -> None:
     for item in sorted(files, key=lambda x: x["name"].lower()):
         key = item["name"]
         display_name = key.split("__", 1)[-1]
+        if display_name.startswith("b64__"):
+            try:
+                import base64
+                encoded = display_name[5:].rsplit(".", 1)[0]
+                display_name = base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4)).decode("utf-8")
+            except (ValueError, UnicodeError):
+                pass
         if search and search.lower() not in display_name.lower():
             continue
         with st.expander(display_name):
@@ -994,7 +1011,7 @@ def main() -> None:
         st.write(profile["full_name"])
         st.caption(f"{ROLES_HE[profile['role']]} · {profile.get('office_name') or ''}")
         if profile["role"] in {"admin", "referent"}:
-            pages = ["מערכת תפעול", "עוזר AI", "קבצים חשובים", "תיקון קבצים", "העלאת קובץ", "היסטוריית קבצים", "סטטוס חודשי"]
+            pages = ["לקוחות", "עוזר AI", "קבצים חשובים", "תיקון קבצים", "העלאת קובץ", "היסטוריית קבצים", "סטטוס חודשי"]
         else:
             pages = ["העלאת קובץ", "היסטוריית קבצים", "סטטוס חודשי"]
         if profile["role"] == "admin":
@@ -1004,7 +1021,7 @@ def main() -> None:
             st.session_state.clear()
             st.rerun()
 
-    if page == "מערכת תפעול" and profile["role"] in {"admin", "referent"}:
+    if page == "לקוחות" and profile["role"] in {"admin", "referent"}:
         operations_page(profile, admin_client(), assigned_employers(profile))
     elif page == "עוזר AI": ai_assistant_page(profile)
     elif page == "קבצים חשובים": important_files_page(profile)
