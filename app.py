@@ -16,6 +16,7 @@ from dateutil.relativedelta import relativedelta
 from supabase import Client, create_client
 from lyn_operations import operations_page
 from lyn_unmatched import unmatched_page, ai_knowledge_context
+from lyn_knowledge import knowledge_page, faq_context
 
 st.set_page_config(page_title="LYN | העלאות מעסיקים", page_icon="logo.png" if Path("logo.png").exists() else "📁", layout="wide")
 
@@ -911,7 +912,9 @@ def ai_assistant_page(profile: dict) -> None:
         return
     st.title("עוזר AI מקצועי")
     st.caption("ייעוץ מקצועי וניסוח פניות לאי־שיוכים. אין שליחה אוטומטית של מיילים.")
-    chat_tab, workflow_tab = st.tabs(["💬 שאלות לעוזר AI", "📨 טיפול באי־שיוכים וטיוטות מייל"])
+    chat_tab, knowledge_tab, workflow_tab = st.tabs(["💬 שאלות לעוזר AI", "📚 מרכז ידע", "📨 טיפול באי־שיוכים וטיוטות מייל"])
+    with knowledge_tab:
+        knowledge_page()
     with workflow_tab:
         unmatched_page(profile)
     with chat_tab:
@@ -948,7 +951,7 @@ def _ai_chat_content(profile: dict) -> None:
                       "ואסור לטעון שבדקת אותם. אל תבקש נתוני עובדים מזהים או מידע אישי רגיש. "
                       "ליצירת טיוטת מייל עם פרטי מעסיק מלאים הפנה ללשונית טיפול באי־שיוכים. "
                       "אין להמציא כתובות מייל או להבטיח שיוך לפני אישור הגוף המוסדי. "
-                      + ai_knowledge_context())
+                      + ai_knowledge_context() + faq_context() + "\nהפרד בין נוהל LYN שנמסר על ידי המנהל לבין ידע כללי או הצעת AI; סמן תוכן שממתין לאישור במפורש. אל תמציא מספרי חשבונות בנק או שיעורי הפרשה. כאשר חסר מידע, הפנה למקור המתאים.")
             payload = {"model": "gpt-4.1-mini", "messages": [{"role": "system", "content": system}] + st.session_state.lyn_ai_messages[-12:], "temperature": 0.2, "max_tokens": 550}
             req = Request("https://api.openai.com/v1/chat/completions", data=json.dumps(payload, ensure_ascii=False).encode("utf-8"), headers={"Authorization": "Bearer " + api_key, "Content-Type": "application/json"}, method="POST")
             with urlopen(req, timeout=35) as response:
