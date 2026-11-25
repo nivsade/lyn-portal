@@ -2,6 +2,7 @@
 import streamlit as st
 import pandas as pd
 from lyn_receipts import receipt_history
+from lyn_monthly import monthly_page, monthly_history
 
 INTERNAL = {'admin', 'referent'}
 
@@ -28,6 +29,10 @@ def operations_page(profile, db, employers):
     st.title('LYN | לקוחות')
     if not employers:
         st.info('אין מעסיקים משויכים.'); return
+    mode = st.radio("תצוגה", ["מעקב חודשי", "כרטיס לקוח"], horizontal=True)
+    if mode == "מעקב חודשי":
+        monthly_page(profile, db, employers)
+        return
     choices = {f"{e['name']} · {e.get('employer_number') or ''}": e for e in employers}
     selected = choices[st.selectbox('בחר מעסיק', list(choices), key='ops_employer')]
     eid = selected['id']
@@ -35,6 +40,7 @@ def operations_page(profile, db, employers):
     st.caption(f"מזהה מעסיק: {selected.get('employer_number') or 'לא הוזן'}")
     tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(['כרטיס מעסיק','ייפויי כוח','אי־שיוכים','משימות','קבצים','אסמכתאות'])
     with tab1:
+        monthly_history(db, eid)
         details = _records(db, 'lyn_employer_details', eid)
         old = details[0] if details else {}
         with st.form('employer_details_form'):
