@@ -3,6 +3,7 @@ import streamlit as st
 import pandas as pd
 from lyn_receipts import receipt_history
 from lyn_monthly import monthly_page, monthly_history
+from lyn_feedback import import_page, feedback_view
 
 INTERNAL = {'admin', 'referent'}
 
@@ -29,7 +30,11 @@ def operations_page(profile, db, employers):
     st.title('LYN | לקוחות')
     if not employers:
         st.info('אין מעסיקים משויכים.'); return
-    mode = st.radio("תצוגה", ["מעקב חודשי", "כרטיס לקוח"], horizontal=True)
+    mode = st.radio("תצוגה", ["מעקב חודשי", "כרטיס לקוח", "היזונים מהמסלקה", "אי־שיוכים מהמסלקה"], horizontal=True)
+    if mode in ("היזונים מהמסלקה", "אי־שיוכים מהמסלקה"):
+        if mode == "היזונים מהמסלקה": import_page(profile, db, employers)
+        feedback_view(profile, db, employers, only_issues=mode=="אי־שיוכים מהמסלקה")
+        return
     if mode == "מעקב חודשי":
         monthly_page(profile, db, employers)
         return
@@ -70,7 +75,7 @@ def operations_page(profile, db, employers):
                     except Exception as ex: st.error(str(ex))
     with tab3:
         _show(_records(db, 'lyn_unmatched_cases', eid), ['employee_identifier','employee_first_name','employee_last_name','fund_name','report_month','error_type','error_detail','handling_status','reported_contributions'])
-        st.caption('ייבוא המקרים מקובץ האקסל יתווסף בשלב הבא. אין שינוי בנתוני המקור.')
+        feedback_view(profile, db, [selected], key='client_feedback', only_issues=True)
     with tab4:
         tasks = _records(db, 'lyn_tasks', eid)
         _show(tasks, ['title','status','priority','due_date','description'])
